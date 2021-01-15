@@ -1,0 +1,126 @@
+__Name__   = "SketcherPointSymmetricRectangle"
+__Author__  = "edi"
+__Version__ = "0.0.2"
+__License__ = 'LGPL v2'
+__Web__ = 'https://forum.freecadweb.org/viewtopic.php?f=22&t=50437&p=444012#p444012'
+__Help__ = 'Click center and vertex to create a rectangle'
+__Status__ = 'Stable'
+__Requires__ = 'FreeCAD >= v0.18'
+__Date__    = "2021-01-11"
+"""
+This macro creates a point symmetric rectangle in sketcher
+
+Workflow:
+- start the macro while a sketch is opened.
+- click the center point.
+- move the cursor. A rubber rectangle with diagonals is dragged.
+- click a vertex of the rectangle
+
+Benefits: the rectangle is connected to a center point by constraints.
+This enables easy draging and fixing.
+"""
+from pivy.coin import *
+if App.Version()[1].find('18') == 0: import DraftTrackers, Draft
+if App.Version()[1].find('19') == 0: import draftguitools.gui_trackers as DraftTrackers
+
+class inputRectangle:
+	''' input a rubber rectange with its diagonals '''
+	def __init__(self):
+		self.alignDraftWorkingPlane()
+		self.view = FreeCADGui.ActiveDocument.ActiveView 
+		self.stack = [] 
+		self.trackerRect = DraftTrackers.rectangleTracker(scolor=(1,1,1),swidth=3) 
+		self.trackerDiag1 = DraftTrackers.lineTracker(scolor=(1,1,1),swidth=1)
+		self.trackerDiag2 = DraftTrackers.lineTracker(scolor=(1,1,1),swidth=1)
+		self.trackerRect.raiseTracker() 
+		self.trackerDiag1.raiseTracker() 
+		self.trackerDiag2.raiseTracker() 
+		self.MouseClick = self.view.addEventCallbackPivy(SoMouseButtonEvent.getClassTypeId(), self.mouseClicked) 
+		self.MouseMove = self.view.addEventCallbackPivy(SoLocation2Event.getClassTypeId(),self.mouseMoved) 
+
+	def mouseMoved(self, moveEvent):
+		''' slot: the mouse has been moved '''
+		event = moveEvent.getEvent()
+		if len(self.stack)==1: 
+			pos = event.getPosition() 
+			point1 = self.view.getPoint(2*self.centerx-pos[0],2*self.centery-pos[1])
+			point2 = self.view.getPoint(pos[0],pos[1]) 
+			point3 = self.view.getPoint(2*self.centerx-pos[0],pos[1])
+			point4 =  self.view.getPoint(pos[0],2*self.centery-pos[1])
+			self.trackerRect.p1(point1) 
+			self.trackerRect.p3(point2) 
+			self.trackerDiag1.p1(point1) 
+			self.trackerDiag1.p2(point2) 
+			self.trackerDiag2.p1(point3) 
+			self.trackerDiag2.p2(point4) 
+
+	def mouseClicked(self, clickedEvent):
+		''' slot: a mouse button has been pressed '''
+		event = clickedEvent.getEvent() 
+		if event.getState() == SoMouseButtonEvent.DOWN: 
+			pos = event.getPosition() 
+			point = self.view.getPoint(pos[0], pos[1]) 
+			self.stack.append(point) 
+			if len(self.stack)==1: 
+				self.centerx = pos[0]
+				self.centery = pos[1]
+				self.trackerRect.on() 
+				self.trackerDiag1.on() 
+				self.trackerDiag2.on() 
+		if len(self.stack) == 2: 
+			self.view.removeEventCallbackPivy(SoMouseButtonEvent.getClassTypeId(), self.MouseClick) 
+			self.view.removeEventCallbackPivy(SoLocation2Event.getClassTypeId(),self.MouseMove)  
+			self.trackerRect.off() 
+			self.trackerRect.finalize()
+			self.trackerDiag1.off() 
+			self.trackerDiag1.finalize()
+			self.trackerDiag2.off() 
+			self.trackerDiag2.finalize()
+			self.createRectangle()
+
+	def alignDraftWorkingPlane(self):
+		''' align DraftWorkingPlane to Sketch '''
+		if not hasattr(FreeCAD,'DraftWorkingPlane'):
+			ActiveWorkbench = Gui.activeWorkbench()
+			Gui.activateWorkbench("DraftWorkbench")
+			Gui.activateWorkbench(ActiveWorkbench.name())
+		SketchRot = ActiveSketch.Placement.Rotation
+		SketchBase = ActiveSketch.Placement.Base
+		NormalVector = SketchRot.multVec(App.Vector(0,0,1))
+		App.DraftWorkingPlane.alignToPointAndAxis(SketchBase, NormalVector, 0.0)
+
+	def createRectangle(self):
+		''' create rectangle in sketcher '''
+		InvSketchRot = ActiveSketch.Placement.Rotation
+		InvSketchRot.inverted()
+		CenterPoint3D = App.Vector(self.stack[0].x,self.stack[0].y,self.stack[0].z)
+		PosPoint3D = App.Vector(self.stack[1].x,self.stack[1].y,self.stack[1].z)
+		CenterPoint = InvSketchRot.multVec(CenterPoint3D)
+		PosPoint = InvSketchRot.multVec(PosPoint3D)
+		P1 = App.Vector(2*CenterPoint.x-PosPoint.x,2*CenterPoint.y-PosPoint.y,0)
+		P2 = App.Vector(PosPoint.x,PosPoint.y,0)
+		P3 = App.Vector(2*CenterPoint.x-PosPoint.x,PosPoint.y,0)
+		P4 = App.Vector(PosPoint.x,2*CenterPoint.y-PosPoint.y,0)
+		GeoStartId = ActiveSketch.GeometryCount
+		geoList = []
+		geoList.append(Part.Point(CenterPoint))
+		geoList.append(Part.LineSegment(P1,P4))
+		geoList.append(Part.LineSegment(P4,P2))
+		geoList.append(Part.LineSegment(P2,P3))
+		geoList.append(Part.LineSegment(P3,P1))
+		ActiveSketch.addGeometry(geoList,False)
+		conList = []
+		conList.append(Sketcher.Constraint('Coincident',GeoStartId+1,2,GeoStartId+2,1))
+		conList.append(Sketcher.Constraint('Coincident',GeoStartId+2,2,GeoStartId+3,1))
+		conList.append(Sketcher.Constraint('Coincident',GeoStartId+3,2,GeoStartId+4,1))
+		conList.append(Sketcher.Constraint('Coincident',GeoStartId+4,2,GeoStartId+1,1))
+		conList.append(Sketcher.Constraint('Horizontal',GeoStartId+1))
+		conList.append(Sketcher.Constraint('Horizontal',GeoStartId+3))
+		conList.append(Sketcher.Constraint('Vertical',GeoStartId+2))
+		conList.append(Sketcher.Constraint('Vertical',GeoStartId+4))
+		conList.append(Sketcher.Constraint('Symmetric',GeoStartId+1,2,GeoStartId+3,2,GeoStartId+0,1))
+		ActiveSketch.addConstraint(conList)
+		App.ActiveDocument.recompute()
+
+execute = inputRectangle()
+

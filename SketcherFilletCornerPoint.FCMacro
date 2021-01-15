@@ -1,0 +1,131 @@
+__Name__   = "SketcherFilletCornerPoint"
+__Author__  = "edi"
+__Version__ = "0.0.1"
+__License__ = 'LGPL v2'
+__Web__ = 'https://forum.freecadweb.org/viewtopic.php?f=8&t=54179&start=20'
+__Help__ = 'Open a sketch. Start the macro. Click two neighbouring lines of a fillet.'
+__Status__ = 'Stable'
+__Requires__ = 'e.g. FreeCAD >= v0.18'
+__Date__    = "2021-01-15"
+'''
+This macro creates a fillet corner point
+
+Workflow:
+- Start the macro, having an opened sketch
+- Click the two neighbouring lines of a fillet arc
+- Repeat at the next fillet ...
+- End the macro by clicking the right mouse button
+'''
+from pivy.coin import *
+from PySide import QtCore, QtGui
+
+class filletCornerPoint:
+
+    def __init__(self):
+        self.view = FreeCADGui.ActiveDocument.ActiveView 
+        self.stack = [] 
+        self.MouseClicked = self.view.addEventCallbackPivy(SoMouseButtonEvent.getClassTypeId(), self.mouseClicked) 
+        QtGui.QApplication.setOverrideCursor(QtGui.QCursor(QtGui.QPixmap(self.getIcon()),7,7))
+
+    def mouseClicked(self, event_callback):
+        ''' slot: a mouse button has been clicked '''
+        event = event_callback.getEvent() 
+        if event.getButton() == 1: 
+            if event.getState() == SoMouseButtonEvent.DOWN:
+                pos = event.getPosition() 
+                point = self.view.getPoint(pos[0], pos[1]) 
+                self.stack.append(point) 
+            if len(self.stack) == 2: 
+                self.createFilletPoint()
+                self.stack = []
+        else: 
+            self.view.removeEventCallbackPivy(SoMouseButtonEvent.getClassTypeId(), self.MouseClicked)
+            QtGui.QApplication.restoreOverrideCursor()
+
+    def getIcon(self):
+        Icon = [  \
+        "32 32 3 1",\
+        "+ c #FFFFFF",\
+        "* c #FF0000",\
+        ". c None",\
+        "......+.........................",\
+        "......+.........................",\
+        "......+.........................",\
+        "......+.........................",\
+        "......+.........................",\
+        "................................",\
+        "+++++...+++++...................",\
+        "................................",\
+        "......+.........................",\
+        "......+.........................",\
+        "......+.........................",\
+        "......+.***.....................",\
+        "......+.*.*.....................",\
+        "........***.....................",\
+        ".........+......................",\
+        ".........+......................",\
+        ".........+......................",\
+        ".........+......................",\
+        ".........+.........***..........",\
+        ".........+.........*.*..........",\
+        ".........+.........***..........",\
+        "........***.....................",\
+        "........*.*.....................",\
+        "........***.....................",\
+        "..........+.....................",\
+        "...........+....................",\
+        "............+...................",\
+        ".............+..................",\
+        "..............+.................",\
+        "........***....+***..........***",\
+        "........*.*.....*.*++++++++++*.*",\
+        "........***.....***..........***"]
+        return Icon
+
+    def isSelected(self,Point,Edge):
+        ''' True if Edge is the selected one '''
+        StartPt = Edge.StartPoint
+        EndPt = Edge.EndPoint
+        EdgeLength = StartPt.sub(EndPt).Length
+        DistStart = Point.sub(StartPt).Length
+        if DistStart < EdgeLength:
+            DistEnd = Point.sub(EndPt).Length
+            if DistEnd < EdgeLength:
+                return Point.distanceToLineSegment(StartPt,EndPt).Length < 1
+
+    def selEdge(self,Point):
+        ''' return the selected edge '''
+        geoList = ActiveSketch.Geometry
+        geoCount = ActiveSketch.GeometryCount
+        for i in range(geoCount):
+            if geoList[i].isDerivedFrom('Part::GeomLineSegment'):
+                if self.isSelected(Point,geoList[i]):
+                    return [i,geoList[i]]
+                    break
+
+    def intersection(self,Edge1,Edge2):
+        ''' return intersection of lines through the edges '''
+        Line1 = Part.Line(Edge1.StartPoint,Edge1.EndPoint)
+        Line2 = Part.Line(Edge2.StartPoint,Edge2.EndPoint)
+        IP = Line1.intersect(Line2)[0]
+        return App.Vector(IP.X,IP.Y,IP.Z)
+
+    def createFilletPoint(self):
+        ''' create fillet corner point '''
+        InvSketchRot = ActiveSketch.Placement.Rotation.inverted()
+        Point1_3D = App.Vector(self.stack[0].x,self.stack[0].y,self.stack[0].z)
+        Point2_3D = App.Vector(self.stack[1].x,self.stack[1].y,self.stack[1].z)
+        Point1 = InvSketchRot.multVec(Point1_3D)
+        Point2 = InvSketchRot.multVec(Point2_3D)
+        Edge1 = self.selEdge(Point1)
+        Edge2 = self.selEdge(Point2)
+        if (Edge1 != None) and (Edge2 != None):
+            InterPoint = self.intersection(Edge1[1],Edge2[1])
+            if InterPoint:
+                ActiveSketch.addGeometry(Part.Point(InterPoint))
+                geoCount = ActiveSketch.GeometryCount-1
+                ActiveSketch.addConstraint(Sketcher.Constraint('PointOnObject',geoCount,1,Edge1[0]))
+                ActiveSketch.addConstraint(Sketcher.Constraint('PointOnObject',geoCount,1,Edge2[0]))
+        App.ActiveDocument.recompute()
+
+filletCornerPoint() 
